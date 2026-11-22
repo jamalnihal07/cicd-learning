@@ -38,16 +38,21 @@ jobs:
       - name: Build and test
         run: ./mvnw clean verify
 
-      - name: Run SonarQube analysis
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: ./mvnw sonar:sonar -Dsonar.token=${SONAR_TOKEN}
+      - name: Run dependency security scan
+        run: ./mvnw dependency-check:check
 
       - name: Upload JAR artifact
         uses: actions/upload-artifact@v4
         with:
           name: application-jar
           path: target/*.jar
+
+      - name: Upload dependency security report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-security-report
+          path: target/dependency-check-report.html
 
       - name: Upload test reports
         if: failure()
