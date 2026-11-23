@@ -16,10 +16,11 @@ permissions:
 
 env:
   JAVA_VERSION: '21'
+  IMAGE_NAME: cicd-learning
 
 jobs:
 
-  build-and-test:
+  build-test-scan:
 
     runs-on: ubuntu-latest
 
@@ -38,6 +39,11 @@ jobs:
       - name: Build and test
         run: ./mvnw clean verify
 
+      - name: Run SonarQube analysis
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: ./mvnw sonar:sonar -Dsonar.token=${SONAR_TOKEN}
+
       - name: Run dependency security scan
         run: ./mvnw dependency-check:check
 
@@ -46,6 +52,12 @@ jobs:
         with:
           name: application-jar
           path: target/*.jar
+
+      - name: Build Docker image
+        run: docker build -t ${{ env.IMAGE_NAME }}:${{ github.sha }} .
+
+      - name: Scan Docker image
+        run: trivy image --severity CRITICAL,HIGH --exit-code 1 ${{ env.IMAGE_NAME }}:${{ github.sha }}
 
       - name: Upload dependency security report
         if: always()
