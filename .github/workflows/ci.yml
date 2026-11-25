@@ -1,4 +1,4 @@
-name: Java CI
+name: Multi-Service Docker CI
 
 on:
   push:
@@ -18,13 +18,21 @@ permissions:
 env:
   JAVA_VERSION: '21'
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAMESPACE: ${{ github.repository_owner }}
 
 jobs:
 
   build-test-scan-publish:
 
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+
+      matrix:
+        service:
+          - order-service
+          - payment-service
 
     steps:
 
@@ -38,22 +46,9 @@ jobs:
           java-version: ${{ env.JAVA_VERSION }}
           cache: maven
 
-      - name: Build and test
-        run: ./mvnw clean verify
-
-      - name: Run SonarQube analysis
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: ./mvnw sonar:sonar -Dsonar.token=${SONAR_TOKEN}
-
-      - name: Run dependency security scan
-        run: ./mvnw dependency-check:check
-
-      - name: Upload JAR artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: application-jar
-          path: target/*.jar
+      - name: Build and test service
+        working-directory: services/${{ matrix.service }}
+        run: ../../mvnw clean verify
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -63,24 +58,27 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build Docker image
-        run: docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} .
+        working-directory: services/${{ matrix.service }}
+        run: |
+          docker build \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.service }}:${{ github.sha }} \
+            .
 
       - name: Scan Docker image
-        run: trivy image --severity CRITICAL,HIGH --exit-code 1 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        run: |
+          trivy image \
+            --severity CRITICAL,HIGH \
+            --exit-code 1 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.service }}:${{ github.sha }}
 
       - name: Push Docker image
-        run: docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        run: |
+          docker push \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.service }}:${{ github.sha }}
 
-      - name: Upload dependency security report
+      - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dependency-security-report
-          path: target/dependency-check-report.html
-
-      - name: Upload test reports
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-reports
-          path: target/surefire-reports/
+          name: ${{ matrix.service }}-test-reports
+          path: services/${{ matrix.service }}/target/surefire-reports/

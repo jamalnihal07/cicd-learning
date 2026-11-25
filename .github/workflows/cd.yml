@@ -1,0 +1,78 @@
+name: Kubernetes CD
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Docker image tag to deploy
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  KUBE_NAMESPACE: default
+  SERVICE_NAME: order-service
+  IMAGE_NAME: ghcr.io/jamalnihal07/order-service
+
+jobs:
+
+  deploy:
+
+    runs-on: ubuntu-latest
+
+    environment:
+      name: development
+
+    steps:
+
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Configure Kubernetes credentials
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          mkdir -p "$HOME/.kube"
+          printf '%s' "$KUBE_CONFIG" > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+
+      - name: Verify Kubernetes connection
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Prepare image reference
+        run: |
+          echo "ORDER_SERVICE_IMAGE=${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}" >> "$GITHUB_ENV"
+
+      - name: Render Kubernetes deployment manifest
+        run: |
+          envsubst '${ORDER_SERVICE_IMAGE}' \
+            < k8s/order-service/deployment.yaml \
+            > /tmp/order-service-deployment.yaml
+
+      - name: Show rendered deployment manifest
+        run: |
+          cat /tmp/order-service-deployment.yaml
+
+      - name: Deploy Kubernetes manifests
+        run: |
+          kubectl apply \
+            -f /tmp/order-service-deployment.yaml \
+            -n ${{ env.KUBE_NAMESPACE }}
+
+          kubectl apply \
+            -f k8s/order-service/service.yaml \
+            -n ${{ env.KUBE_NAMESPACE }}
+
+      - name: Verify deployment rollout
+        run: |
+          kubectl rollout status \
+            deployment/${{ env.SERVICE_NAME }} \
+            -n ${{ env.KUBE_NAMESPACE }} \
+            --timeout=180s
